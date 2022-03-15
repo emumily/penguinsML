@@ -1,0 +1,198 @@
+---
+title: "penguins_classification"
+output: html_document
+---
+
+
+## Load Packages
+Below is a list of packages needed to run this tutorial. Make sure to install them if you haven't already.
+```{r eval=FALSE, include=FALSE}
+install.packages("tidyverse")
+install.packages("tidymodels")
+install.packages("plotly")
+
+install.packages("palmerpenguins")
+
+install.packages("glm")
+install.packages("kknn")
+install.packages("ranger")
+install.packages("rpart")
+```
+
+Load the following libraries before beginning.
+```{r load-packages, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(plotly)
+library(palmerpenguins)
+```
+
+## Examine Data
+We'll be using the palmer penguins dataset, made available through the [`palmerpenguins` package](https://allisonhorst.github.io/palmerpenguins/). Let's take a quick look at the data.
+```{r view-data}
+penguins
+```
+
+In this tutorial, we'll be using penguin body dimensions to predict species. Take a look at the 3d scatterplot below. Based on this scatterplot, is it reasonable to expect a machine learning model to perform well in a species classification task?
+```{r echo=FALSE}
+fig <- penguins %>%
+  plot_ly(
+    x = ~bill_length_mm, 
+    y = ~bill_depth_mm, 
+    z = ~flipper_length_mm,
+    color = ~sex,
+    alpha = 0.8,
+    size = 1
+  )
+
+fig
+```
+
+Before starting to build our ML models, let's do some data selection and filtering:
+- The label you'll be using are `sex`.
+- The features you'll be using are:
+  - `bill_length_mm`
+  - `bill_depth_mm`
+  - `flipper_length_mm`
+  - `body_mass_g`
+  - `species`
+- We'll filter the data to rows with enough data available to generate a prediction (not all NAs)
+```{r}
+penguins_df <- penguins %>%
+  select(
+    sex,
+    bill_length_mm, 
+    bill_depth_mm,
+    flipper_length_mm,
+    body_mass_g,
+    species
+  ) %>%
+  filter(
+    is.na(bill_length_mm) + 
+      is.na(bill_depth_mm) + 
+      is.na(flipper_length_mm) + 
+      is.na(body_mass_g) + 
+      is.na(species) != 5,
+    !is.na(sex)
+  )
+
+penguins_df
+```
+
+## Split Data
+Next we'll split our data into the training and test sets.
+- Training set used to train the model and compare model configurations.
+- Test set used to evaluate final model performance.
+```{r}
+set.seed(123)
+
+penguin_split <- initial_split(penguins_df, strata = sex)
+penguin_train <- training(penguin_split)
+penguin_test <- testing(penguin_split)
+```
+
+We'll create bootstrap samples on our training set, so we can have cross-validation during training.
+```{r}
+set.seed(123)
+penguin_bootstraps <- bootstraps(penguin_train)
+```
+
+## Create Recipes and Workflows
+Next you'll create recipes and workflows. Machine learning doesn't just contain a prediction model, but it also contains preprocessing steps. By using recipes and workflows, you'll ensure you are accounting for both model fitting and preprocessing steps into your work.
+
+First let's build a recipe, which contains our data preprocessing steps. In this examples, you'll perform [knn imputation](https://machinelearningmastery.com/knn-imputation-for-missing-values-in-machine-learning/) to fill in any NA values.
+```{r}
+preprocessing_recipe <- penguins_df %>%
+  recipe(sex ~ .) %>%
+  step_impute_knn(all_predictors())
+```
+
+Now, we'll build three separate workflows using the recipe we just created. The three separate workflows will correspond to three different types of ML (classification) algorithms: 
+- [k-nearest neighbors](https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm) - [decision tree](https://en.wikipedia.org/wiki/Decision_tree_learning)
+- [random forest](https://en.wikipedia.org/wiki/Random_forest)
+
+```{r}
+knn_workflow <- workflow() %>%
+  add_recipe(preprocessing_recipe) %>%
+  add_model(nearest_neighbor(mode="classification"))
+```
+
+```{r}
+dt_workflow <- workflow() %>%
+  add_recipe(preprocessing_recipe) %>%
+  add_model(decision_tree(mode="classification"))
+```
+
+```{r}
+rf_workflow <- workflow() %>%
+  add_recipe(preprocessing_recipe) %>%
+  add_model(rand_forest(mode="classification"))
+```
+
+## Compare performance on training resamples
+
+Now it's time to train our machine learning models (using their workflows). You'll fit each workflow to the bootstrap samples you generated from the training set earlier, and you'll compute the evaluation metrics (accuracy and roc auc) and confusion matrices.
+
+```{r}
+knn_resamples <- knn_workflow %>%
+  fit_resamples(
+    penguin_bootstraps,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+knn_confusion <- conf_mat_resampled(knn_resamples)
+knn_metrics <- collect_metrics(knn_resamples)
+
+knn_metrics
+```
+
+```{r}
+dt_resamples <- dt_workflow %>%
+  fit_resamples(
+    penguin_bootstraps,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+dt_confusion <- conf_mat_resampled(dt_resamples)
+dt_metrics <- collect_metrics(dt_resamples)
+
+dt_metrics
+```
+
+```{r}
+rf_resamples <- rf_workflow %>%
+  fit_resamples(
+    penguin_bootstraps,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+rf_confusion <- conf_mat_resampled(rf_resamples)
+rf_metrics <- collect_metrics(rf_resamples)
+
+rf_metrics
+```
+Compare the evaluation metrics between the different models (workflows). Which model performed best?
+
+## Train and Evaluate Final Model
+You'll select the model that performed best for final model training and evaluation on the test set.
+
+First, fit the workflow to the test set.
+```{r}
+penguin_final <- rf_workflow %>%
+  last_fit(penguin_split)
+```
+
+Let's take a look at our test evaluation metrics.
+```{r}
+collect_metrics(penguin_final)
+```
+Now let's take a look at our test confusion matrix.
+```{r}
+collect_predictions(penguin_final) %>%
+  conf_mat(sex, .pred_class)
+```
+
+How did you do? Are the results what you expected? 
+
+## Acknowledgements
+This tutorial is heavily derived from [Julia Silge's #TidyTuesday Palmer Penguins blog post](https://juliasilge.com/blog/palmer-penguins/). Be sure to check out the blog post and watch her [screencast video on YouTube](https://youtu.be/z57i2GVcdww).
