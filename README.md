@@ -1,5 +1,7 @@
 # penguinsML
 ML workshop with penguin classification of sex and species
+UCSF Data Science Initiative February 2022
+
 # About this repository
 This repository contains the files used in the demo and project of DSI Hacky Hour: Classifying Penguin Species w/ Machine Learning (and R).
 
